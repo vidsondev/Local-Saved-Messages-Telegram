@@ -23,6 +23,8 @@ export interface Message {
   size?: number;
   createdAt: number;
   updatedAt?: number;
+  reactions?: Record<string, string[]>;
+  isPinned?: boolean;
 }
 
 // Ensure directories exist
@@ -157,6 +159,32 @@ async function startServer() {
         msg.updatedAt = Date.now();
         saveDb();
         io.emit("message-edited", msg);
+      }
+    });
+
+    socket.on("toggle-reaction", ({ id, emoji, clientId }: { id: string, emoji: string, clientId: string }) => {
+      const msg = messages.find(m => m.id === id);
+      if (msg) {
+        if (!msg.reactions) msg.reactions = {};
+        if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+        const index = msg.reactions[emoji].indexOf(clientId);
+        if (index > -1) {
+          msg.reactions[emoji].splice(index, 1);
+          if (msg.reactions[emoji].length === 0) delete msg.reactions[emoji];
+        } else {
+          msg.reactions[emoji].push(clientId);
+        }
+        saveDb();
+        io.emit("message-updated", msg);
+      }
+    });
+
+    socket.on("toggle-pin", ({ id, isPinned }: { id: string, isPinned: boolean }) => {
+      const msg = messages.find(m => m.id === id);
+      if (msg) {
+        msg.isPinned = isPinned;
+        saveDb();
+        io.emit("message-updated", msg);
       }
     });
 

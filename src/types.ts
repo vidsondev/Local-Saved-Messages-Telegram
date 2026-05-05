@@ -9,4 +9,6 @@ export interface Message {
   size?: number;
   createdAt: number;
   updatedAt?: number;
+  reactions?: Record<string, string[]>;
+  isPinned?: boolean;
 }

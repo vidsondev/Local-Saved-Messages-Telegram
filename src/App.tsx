@@ -18,7 +18,10 @@ import {
   Copy,
   Check,
   Pencil,
-  X
+  X,
+  SmilePlus,
+  Pin,
+  PinOff
 } from "lucide-react";
 import { Message } from "./types";
 import { cn, formatBytes } from "./lib/utils";
@@ -39,6 +42,18 @@ const socket: Socket = io({
   path: "/socket.io"
 });
 
+const getClientId = () => {
+  let id = localStorage.getItem("telegram-clone-client-id");
+  if (!id) {
+    id = Math.random().toString(36).substring(2);
+    localStorage.setItem("telegram-clone-client-id", id);
+  }
+  return id;
+};
+const clientId = getClientId();
+
+const EMOJIS = ["👍", "❤️", "😆", "😮", "😢", "👏"];
+
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
@@ -48,6 +63,13 @@ export default function App() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [reactionMenuId, setReactionMenuId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    msg: Message;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -77,6 +99,22 @@ export default function App() {
       socket.off("message-edited");
     };
   }, []);
+
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      if (contextMenu) setContextMenu(null);
+      if (reactionMenuId) setReactionMenuId(null);
+    };
+    const handleKeydown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && contextMenu) setContextMenu(null);
+    };
+    window.addEventListener("click", handleGlobalClick);
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      window.removeEventListener("click", handleGlobalClick);
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [contextMenu, reactionMenuId]);
 
   const scrollToBottom = (smooth = true) => {
     setTimeout(() => {
@@ -182,6 +220,36 @@ export default function App() {
     setInputText("");
   };
 
+  const toggleReaction = (id: string, emoji: string) => {
+    socket.emit("toggle-reaction", { id, emoji, clientId });
+    setReactionMenuId(null);
+  };
+
+  const togglePin = (id: string, isPinned: boolean) => {
+    socket.emit("toggle-pin", { id, isPinned });
+    setContextMenu(null);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, msg: Message) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const menuWidth = 200;
+    const menuHeight = 250;
+    let x = e.clientX;
+    let y = e.clientY;
+    
+    if (window.innerWidth - x < menuWidth) x = window.innerWidth - menuWidth - 10;
+    if (window.innerHeight - y < menuHeight) y = window.innerHeight - menuHeight - 10;
+
+    setContextMenu({
+      visible: true,
+      x,
+      y,
+      msg
+    });
+  };
+
   // Group messages by date
   const filteredMessages = messages.filter(msg => {
     if (!searchQuery.trim()) return true;
@@ -217,11 +285,50 @@ export default function App() {
         </div>
       )}
 
+      {/* Context Menu Overlay */}
+      {contextMenu?.visible && (
+        <div 
+          className="fixed z-[100] bg-[#17212B] border border-white/10 rounded-xl shadow-2xl py-1.5 min-w-[200px] overflow-hidden backdrop-blur-md bg-opacity-95"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {contextMenu.msg.type === "text" && (
+            <>
+              <button className="w-full px-4 py-2.5 text-left flex items-center gap-3 text-[#F5F5F5] hover:bg-[#2B5278]/80 transition-colors"
+                onClick={() => { copyMessage(contextMenu.msg.id, contextMenu.msg.content); setContextMenu(null); }}>
+                <Copy className="w-4 h-4 text-[#87B4D9]" /> Copy Text
+              </button>
+              <button className="w-full px-4 py-2.5 text-left flex items-center gap-3 text-[#F5F5F5] hover:bg-[#2B5278]/80 transition-colors"
+                onClick={() => { startEditing(contextMenu.msg.id, contextMenu.msg.content); setContextMenu(null); }}>
+                <Pencil className="w-4 h-4 text-[#87B4D9]" /> Edit
+              </button>
+            </>
+          )}
+          {contextMenu.msg.type === "file" && (
+            <a href={contextMenu.msg.content} download={contextMenu.msg.originalName} target="_blank" rel="noopener noreferrer" className="w-full px-4 py-2.5 text-left flex items-center gap-3 text-[#F5F5F5] hover:bg-[#2B5278]/80 transition-colors block"
+               onClick={() => setContextMenu(null)}>
+              <Download className="w-4 h-4 text-[#87B4D9]" /> Download
+            </a>
+          )}
+          <button className="w-full px-4 py-2.5 text-left flex items-center gap-3 text-[#F5F5F5] hover:bg-[#2B5278]/80 transition-colors"
+            onClick={() => togglePin(contextMenu.msg.id, !contextMenu.msg.isPinned)}>
+            {contextMenu.msg.isPinned ? <PinOff className="w-4 h-4 text-[#87B4D9]" /> : <Pin className="w-4 h-4 text-[#87B4D9]" />} 
+            {contextMenu.msg.isPinned ? "Unpin Message" : "Pin Message"}
+          </button>
+          
+          <div className="h-[1px] bg-white/10 my-1" />
+          
+          <button className="w-full px-4 py-2.5 text-left flex items-center gap-3 text-red-400 hover:bg-[#2B5278]/80 transition-colors"
+            onClick={() => { deleteMessage(contextMenu.msg.id); setContextMenu(null); }}>
+            <Trash2 className="w-4 h-4" /> Delete
+          </button>
+        </div>
+      )}
+
       {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col max-w-5xl mx-auto w-full shadow-2xl relative bg-[#0E1621] sm:border-x sm:border-[#17212B]">
+      <main className="flex-1 min-h-0 flex flex-col max-w-5xl mx-auto w-full shadow-2xl relative bg-[#0E1621] sm:border-x sm:border-[#17212B]">
         
         {/* Header */}
-        <header className="h-[60px] flex items-center px-4 bg-[#17212B] border-b border-[#000000]/20 shrink-0 sticky top-0 z-20 shadow-sm">
+        <header className="h-[60px] flex items-center px-4 bg-[#17212B] border-b border-[#000000]/20 shrink-0 sticky top-0 z-30 shadow-sm">
           {isSearchOpen ? (
             <div className="flex-1 flex items-center gap-3">
               <button 
@@ -264,12 +371,35 @@ export default function App() {
           )}
         </header>
 
+        {/* Pinned Messages Area */}
+        {messages.filter(m => m.isPinned).length > 0 && (
+          <div className="bg-[#17212B]/95 backdrop-blur-sm border-b border-[#000000]/20 shrink-0 z-20 shadow-sm max-h-[120px] overflow-y-auto custom-scrollbar">
+            {messages.filter(m => m.isPinned).map((msg) => (
+              <div key={`pin-${msg.id}`} className="px-4 py-2 border-l-2 border-[#2AABEE] hover:bg-[#2B5278]/20 transition-colors flex justify-between group cursor-pointer" onClick={() => {}}>
+                <div className="min-w-0 pr-4">
+                  <div className="text-[#2AABEE] text-[13px] font-medium leading-tight mb-0.5">Pinned Message</div>
+                  <div className="text-[13px] text-[#F5F5F5] truncate leading-tight">
+                    {msg.type === "text" ? msg.content : msg.originalName || "File"}
+                  </div>
+                </div>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); togglePin(msg.id, false); }}
+                  className="text-[#7F91A4] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1.5"
+                  title="Unpin"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Messages List */}
         <div 
-          className="flex-1 overflow-y-auto w-full relative custom-scrollbar flex flex-col"
+          className="flex-1 min-h-0 overflow-y-auto w-full relative custom-scrollbar flex flex-col"
           style={{ backgroundImage: 'url("https://telegram.org/img/t_logo.png")', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundSize: '30%', backgroundBlendMode: 'soft-light', opacity: 0.95 }}
         >
-          <div className="p-4 flex-1 flex flex-col justify-end min-h-full">
+          <div className="p-4 flex flex-col mt-auto w-full">
             {Object.keys(groupedMessages).length === 0 ? (
               <div className="m-auto text-center p-6 bg-[#17212B]/80 backdrop-blur-md rounded-2xl max-w-sm">
                 <div className="w-16 h-16 rounded-full bg-[#2B5278] flex items-center justify-center mx-auto mb-4">
@@ -293,115 +423,172 @@ export default function App() {
                   {/* Message Bubbles */}
                   <div className="flex flex-col gap-2">
                     {msgs.map((msg) => (
-                      <div key={msg.id} className="flex justify-end w-full group">
-                        <div className="relative max-w-[85%] sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl text-left bg-[#2B5278] rounded-2xl rounded-tr-sm px-3 pt-2 pb-1.5 shadow-sm text-[15px]">
+                      <div 
+                        key={msg.id} 
+                        className="flex justify-end w-full group relative"
+                        onContextMenu={(e) => handleContextMenu(e, msg)}
+                      >
+                        <div className="relative max-w-[85%] sm:max-w-md md:max-w-lg lg:max-w-xl xl:max-w-2xl text-left bg-gradient-to-br from-[#2B5278] to-[#234361] hover:shadow-md transition-shadow rounded-[18px] rounded-tr-[4px] px-3.5 pt-2 pb-2 shadow-sm border border-[#305C85]/30 text-[16px] leading-[1.45]">
+                          {/* Reaction Menu popup */}
+                          {reactionMenuId === msg.id && (
+                            <div className="absolute top-0 right-0 -mt-14 mr-2 z-40 bg-[#17212B] border border-white/10 rounded-full shadow-2xl px-2 py-1.5 flex gap-1 animate-in fade-in zoom-in-95 duration-150">
+                              {EMOJIS.map(emoji => (
+                                <button
+                                  key={emoji}
+                                  onClick={(e) => { e.stopPropagation(); toggleReaction(msg.id, emoji); }}
+                                  className="w-10 h-10 flex items-center justify-center hover:bg-[#2B5278] rounded-full text-[20px] transition-transform hover:scale-125"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
                           {/* Options buttons (shows on hover) */}
-                          <div className="absolute top-0 right-0 -mt-2 -mr-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10">
+                          <div className="absolute top-0 right-0 -mt-2 -mr-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-30">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setReactionMenuId(reactionMenuId === msg.id ? null : msg.id); }}
+                              className="bg-[#17212B] text-yellow-400 p-1.5 rounded-full hover:bg-yellow-500 hover:text-white shadow-xl border border-white/5 transition-all transform hover:scale-105"
+                              title="Add Reaction"
+                            >
+                              <SmilePlus className="w-3.5 h-3.5" />
+                            </button>
+                            <button 
+                              onClick={() => togglePin(msg.id, !msg.isPinned)}
+                              className="bg-[#17212B] text-purple-400 p-1.5 rounded-full hover:bg-purple-500 hover:text-white shadow-xl border border-white/5 transition-all transform hover:scale-105"
+                              title={msg.isPinned ? "Unpin Message" : "Pin Message"}
+                            >
+                              {msg.isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+                            </button>
                             {msg.type === "text" && (
                               <>
                                 <button 
                                   onClick={() => startEditing(msg.id, msg.content)}
-                                  className="bg-[#17212B] text-blue-400 p-1.5 rounded-full hover:bg-blue-500 hover:text-white shadow-md transition-colors"
+                                  className="bg-[#17212B] text-blue-400 p-1.5 rounded-full hover:bg-blue-500 hover:text-white shadow-xl border border-white/5 transition-all transform hover:scale-105"
                                   title="Edit Message"
                                 >
-                                  <Pencil className="w-3 h-3" />
+                                  <Pencil className="w-3.5 h-3.5" />
                                 </button>
                                 <button 
                                   onClick={() => copyMessage(msg.id, msg.content)}
-                                  className="bg-[#17212B] text-green-400 p-1.5 rounded-full hover:bg-green-500 hover:text-white shadow-md transition-colors"
+                                  className="bg-[#17212B] text-green-400 p-1.5 rounded-full hover:bg-green-500 hover:text-white shadow-xl border border-white/5 transition-all transform hover:scale-105"
                                   title="Copy Message"
                                 >
-                                  {copiedId === msg.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                  {copiedId === msg.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                                 </button>
                               </>
                             )}
                             <button 
                               onClick={() => deleteMessage(msg.id)}
-                              className="bg-[#17212B] text-red-400 p-1.5 rounded-full hover:bg-red-500 hover:text-white shadow-md transition-colors"
+                              className="bg-[#17212B] text-red-400 p-1.5 rounded-full hover:bg-red-500 hover:text-white shadow-xl border border-white/5 transition-all transform hover:scale-105"
                               title="Delete Message"
                             >
-                              <Trash2 className="w-3 h-3" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
 
-                          {msg.type === "text" ? (
-                            <div className="text-white whitespace-pre-wrap break-words leading-relaxed mb-4">
-                              {msg.content}
-                            </div>
-                          ) : (
-                            <div className="mb-3 font-sans">
-                              {msg.mimeType?.startsWith('image/') ? (
-                                <div className="mb-2 -mx-2 -mt-1 rounded-t-xl overflow-hidden cursor-pointer bg-black/20">
-                                  <a href={msg.content} target="_blank" rel="noopener noreferrer">
-                                    <img 
+                          {/* Message Content */}
+                          <div className="relative z-10">
+                            {msg.type === "text" ? (
+                              <div className="text-[#F5F5F5] whitespace-pre-wrap break-words mb-[18px] tracking-[0.01em]">
+                                {msg.content}
+                              </div>
+                            ) : (
+                              <div className="mb-[20px] font-sans">
+                                {msg.mimeType?.startsWith('image/') ? (
+                                  <div className="mb-2 -mx-3.5 -mt-2 rounded-t-[16px] overflow-hidden cursor-pointer bg-black/20 border-b border-black/10">
+                                    <a href={msg.content} target="_blank" rel="noopener noreferrer">
+                                      <img 
+                                        src={msg.content} 
+                                        alt={msg.originalName || "Uploaded Image"} 
+                                        className="w-full max-h-[300px] sm:max-h-[400px] object-cover hover:opacity-95 transition-opacity"
+                                        loading="lazy"
+                                      />
+                                    </a>
+                                  </div>
+                                ) : msg.mimeType?.startsWith('video/') ? (
+                                  <div className="mb-2 -mx-3.5 -mt-2 rounded-t-[16px] overflow-hidden bg-black/40 text-center border-b border-black/10">
+                                    <video 
                                       src={msg.content} 
-                                      alt={msg.originalName || "Uploaded Image"} 
-                                      className="w-full max-h-[300px] sm:max-h-[400px] object-cover hover:opacity-90 transition-opacity"
-                                      loading="lazy"
+                                      controls 
+                                      className="w-full max-h-[300px] sm:max-h-[400px] object-contain mx-auto"
                                     />
-                                  </a>
-                                </div>
-                              ) : msg.mimeType?.startsWith('video/') ? (
-                                <div className="mb-2 -mx-2 -mt-1 rounded-t-xl overflow-hidden bg-black/20 text-center">
-                                  <video 
-                                    src={msg.content} 
-                                    controls 
-                                    className="w-full max-h-[300px] sm:max-h-[400px] object-contain mx-auto"
-                                  />
-                                </div>
-                              ) : msg.mimeType?.startsWith('audio/') ? (
-                                <div className="mb-2 mt-1 relative z-10 w-full min-w-[250px]">
-                                  <audio 
-                                    src={msg.content} 
-                                    controls 
-                                    className="w-full h-10 max-w-full outline-none rounded-xl"
-                                  />
-                                </div>
-                              ) : msg.mimeType === 'application/pdf' ? (
-                                <div className="mb-2 -mx-2 -mt-1 rounded-t-xl overflow-hidden bg-white">
-                                  <iframe 
-                                    src={msg.content} 
-                                    className="w-full h-[300px] sm:h-[400px] border-none"
-                                    title={msg.originalName || "PDF Preview"}
-                                  />
-                                </div>
-                              ) : null}
-                              
-                              <div className="flex items-center gap-3 bg-[#17212B]/30 p-2.5 rounded-xl">
-                                <a 
-                                  href={msg.content} 
-                                  download={msg.originalName}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="w-12 h-12 bg-[#2AABEE] text-white rounded-full flex items-center justify-center shrink-0 hover:bg-[#2298D6] transition-colors shadow-sm cursor-pointer"
-                                  title="Download File"
-                                >
-                                  {msg.mimeType?.startsWith('image/') ? <Download className="w-5 h-5" /> : (() => {
-                                    const Icon = getFileIcon(msg.mimeType);
-                                    return <Icon className="w-6 h-6" />;
-                                  })()}
-                                </a>
-                                <div className="min-w-0 flex-1">
+                                  </div>
+                                ) : msg.mimeType?.startsWith('audio/') ? (
+                                  <div className="mb-3 mt-2 relative z-10 w-full min-w-[250px]">
+                                    <audio 
+                                      src={msg.content} 
+                                      controls 
+                                      className="w-full h-11 max-w-full outline-none rounded-xl shadow-sm"
+                                    />
+                                  </div>
+                                ) : msg.mimeType === 'application/pdf' ? (
+                                  <div className="mb-2 -mx-3.5 -mt-2 rounded-t-[16px] overflow-hidden bg-white/95">
+                                    <iframe 
+                                      src={msg.content} 
+                                      className="w-full h-[300px] sm:h-[400px] border-none"
+                                      title={msg.originalName || "PDF Preview"}
+                                    />
+                                  </div>
+                                ) : null}
+                                
+                                <div className="flex items-center gap-3.5 bg-black/10 hover:bg-black/15 transition-colors p-3 rounded-xl border border-white/5 backdrop-blur-sm mt-2">
+                                  <div className="w-11 h-11 bg-gradient-to-br from-[#2AABEE] to-[#2298D6] text-white rounded-full flex items-center justify-center shrink-0 shadow-sm">
+                                    {(() => {
+                                      const Icon = getFileIcon(msg.mimeType);
+                                      return <Icon className="w-5 h-5" />;
+                                    })()}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="block font-medium text-[#F5F5F5] truncate text-[15px]">
+                                      {msg.originalName || "Unnamed File"}
+                                    </div>
+                                    <div className="text-[#87B4D9] flex items-center gap-1.5 text-[12px] font-medium mt-0.5">
+                                      {formatBytes(msg.size || 0)} 
+                                      <span className="w-1 h-1 rounded-full bg-[#87B4D9]/50"></span> 
+                                      {msg.mimeType?.split('/')[1]?.toUpperCase() || "FILE"}
+                                    </div>
+                                  </div>
                                   <a 
                                     href={msg.content} 
                                     download={msg.originalName}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="block font-medium text-[#F5F5F5] truncate hover:underline"
+                                    className="w-10 h-10 bg-[#17212B]/40 text-[#2AABEE] rounded-full flex items-center justify-center shrink-0 hover:bg-[#2AABEE] hover:text-white transition-all transform hover:scale-105 shadow-sm"
+                                    title="Download File"
                                   >
-                                    {msg.originalName || "Unnamed File"}
+                                    <Download className="w-[18px] h-[18px]" />
                                   </a>
-                                  <div className="text-[#87B4D9] flex items-center gap-2 text-xs font-medium mt-0.5">
-                                    {formatBytes(msg.size || 0)} • {msg.mimeType?.substring(0, 20) || "Unknown Type"}
-                                  </div>
                                 </div>
                               </div>
+                            )}
+                          </div>
+
+                          {/* Reactions */}
+                          {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1 mb-4 z-10 relative pr-16 text-left">
+                              {Object.entries(msg.reactions).map(([emoji, userIds]) => (
+                                <button
+                                  key={emoji}
+                                  onClick={() => toggleReaction(msg.id, emoji)}
+                                  className={cn(
+                                    "flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[12px] font-medium transition-colors border shadow-sm",
+                                    userIds.includes(clientId) 
+                                      ? "bg-[#2B5278] border-[#2AABEE] text-[#F5F5F5]" 
+                                      : "bg-black/20 border-white/10 text-[#F5F5F5] hover:bg-black/30"
+                                  )}
+                                >
+                                  <span>{emoji}</span>
+                                  <span className="text-[11px] opacity-90">{userIds.length}</span>
+                                </button>
+                              ))}
                             </div>
                           )}
                           
+                          {/* Metadata */}
                           <div className={cn(
-                            "flex items-center justify-end gap-1 text-[11px] font-medium select-none pointer-events-none opacity-80",
-                            msg.type === "text" ? "absolute bottom-1 right-2" : "mt-0"
+                            "flex items-center justify-end gap-1.5 text-[11px] font-semibold select-none pointer-events-none opacity-80 z-10",
+                            msg.type === "text" ? "absolute bottom-1.5 right-3" : "absolute bottom-1.5 right-3"
                           )}>
                             {msg.updatedAt && (
                               <span className="text-[#87B4D9] opacity-70 italic mr-0.5">edited</span>
@@ -410,7 +597,7 @@ export default function App() {
                               {format(msg.createdAt, "HH:mm")}
                             </span>
                             {/* Checkmarks simulation */}
-                            <svg className="w-3.5 h-3.5 text-[#50A6E1]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <svg className="w-[15px] h-[15px] text-[#50A6E1]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                               <path d="M20 6L9 17l-5-5" />
                             </svg>
                           </div>
