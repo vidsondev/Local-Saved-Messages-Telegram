@@ -1,0 +1,6 @@
+{
+  "name": "Local Saved Messages",
+  "description": "A Telegram Saved Messages clone for the local network. Share text and files instantly across devices.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
